@@ -24,6 +24,7 @@ end
 
 local TITLES = {
 	grind = "Grinding loot",
+	materials = "Materials fished up with the Rare Fishing buff",
 	opened = "From opened Bloated fish, clams and crates",
 	mining = "Mining", herb = "Herbalism", skin = "Skinning",
 }
@@ -162,7 +163,12 @@ function ns.RefreshUI()
 
 	local order
 	if tab == "fish" then
-		order = { "time", "fish", "cooked", "opened", "fishTotal" }
+		order = { "time", "fish", "cooked" }
+		if ns.RareFishingActive() or sum.materials.total > 0 or #sum.materials.list > 0 then
+			order[#order + 1] = "materials"
+		end
+		order[#order + 1] = "opened"
+		order[#order + 1] = "fishTotal"
 	elseif tab == "gather" then
 		order = { "time" }
 		for _, key in ipairs(ns.GATHER_KEYS) do
@@ -208,6 +214,9 @@ function ns.RefreshUI()
 	local diffText = diff > 0.5 and (" |cff40ff40+" .. ns.FormatMoney(diff) .. "|r") or ""
 	lines.cooked.left:SetText("Fish, if cooked" .. diffText)
 	lines.cooked.right:SetText(Gold(ph(sum.fish.cookedTotal)) .. "/h")
+	lines.materials.left:SetText("Materials  " .. Grey(ns.FormatMoney(sum.materials.total))
+		.. (ns.RareFishingActive() and "" or Grey(" (buff off)")))
+	lines.materials.right:SetText(Gold(ph(sum.materials.total)) .. "/h")
 	lines.opened.left:SetText("Opened (Bloated, clams)  " .. Grey(ns.FormatMoney(sum.opened.total)))
 	lines.opened.right:SetText(Gold(ph(sum.opened.total)) .. "/h")
 	local cookedExtra = sum.fishingCookedTotal - sum.fishingTotal
@@ -282,6 +291,7 @@ local function Build()
 		-- Fishing tab
 		fish = MakeLine("fish", false),
 		cooked = MakeLine("fish", true),
+		materials = MakeLine("materials"),
 		opened = MakeLine("opened"),
 		fishTotal = MakeLine(),
 		-- Gathering tab

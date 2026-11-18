@@ -2,7 +2,7 @@
 ## Title: GoldScribe
 ## Notes: Gold per hour for grinding, fishing (raw vs. cooked) and gathering, in tabs, valued with MarketScribe prices.
 ## Author: Adam
-## Version: 1.1.0
+## Version: 1.2.0
 ## Dependencies: MarketScribe
 ## SavedVariables: GoldScribeDB
 

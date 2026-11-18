@@ -34,6 +34,10 @@
 -- buckets (one per profession), recognised by the gather spell you cast
 -- just before the loot window opened. Each gather is counted once.
 --
+-- Materials: while the Rare Fishing buff is on you, things you fish up that
+-- aren't fish (anything but raw fish) go in a "Materials" bucket, shown as
+-- its own line on the Fishing tab and added to the fishing total.
+--
 -- The window has tabs: Grinding (always there, and it also shows the
 -- session total of everything), plus Fishing and Gathering tabs that only
 -- appear once you've done that in the session. It switches to the tab for
@@ -85,6 +89,7 @@ local function NewSession()
 			grind = { money = 0, items = {} },
 			fish = { money = 0, items = {} },
 			opened = { money = 0, items = {} },
+			materials = { money = 0, items = {} },
 			mining = { money = 0, items = {} },
 			herb = { money = 0, items = {} },
 			skin = { money = 0, items = {} },
@@ -344,8 +349,9 @@ function ns.Summarize()
 		}
 	end
 	out.opened = out.opened or { money = 0, items = 0, total = 0, cookedTotal = 0, list = {} }
-	out.fishingTotal = out.fish.total + out.opened.total
-	out.fishingCookedTotal = out.fish.cookedTotal + out.opened.total
+	out.materials = out.materials or { money = 0, items = 0, total = 0, cookedTotal = 0, list = {} }
+	out.fishingTotal = out.fish.total + out.opened.total + out.materials.total
+	out.fishingCookedTotal = out.fish.cookedTotal + out.opened.total + out.materials.total
 	out.gatherTotal, out.gatherCount = 0, 0
 	out.gathers = {}
 	for _, key in ipairs(ns.GATHER_KEYS) do
@@ -356,6 +362,7 @@ function ns.Summarize()
 	end
 	out.perGather = out.gatherCount > 0 and out.gatherTotal / out.gatherCount or nil
 	out.hasFishing = out.fishingTotal > 0 or next(s.buckets.fish.items) ~= nil or next(s.buckets.opened.items) ~= nil
+		or (s.buckets.materials and next(s.buckets.materials.items) ~= nil)
 	out.hasGathering = out.gatherCount > 0 or out.gatherTotal > 0
 	out.total = out.grind.total + out.fishingTotal + out.gatherTotal
 	out.kills = s.kills or 0
@@ -435,9 +442,43 @@ local function LootFromItem()
 end
 
 local function Activity(bucket)
-	if bucket == "fish" or bucket == "opened" then return "fish" end
+	if bucket == "fish" or bucket == "opened" or bucket == "materials" then return "fish" end
 	if ns.GATHER_NAMES[bucket] then return "gather" end
 	return "grind"
+end
+
+-- Is the Rare Fishing buff on you? (matched by name; /gph fishbuff <name> changes it)
+local FISH_BUFF_DEFAULT = "Rare Fishing"
+function ns.RareFishingActive()
+	local want = ((db and db.fishBuff) or FISH_BUFF_DEFAULT):lower()
+	local function Match(name)
+		return type(name) == "string" and not (issecretvalue and issecretvalue(name)) and name:lower():find(want, 1, true) ~= nil
+	end
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		for i = 1, 80 do
+			local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+			if not (ok and aura) then break end
+			if Match(aura.name) then return true end
+		end
+		return false
+	end
+	for i = 1, 80 do
+		local ok, name = pcall(UnitBuff, "player", i)
+		if not (ok and name) then break end
+		if Match(name) then return true end
+	end
+	return false
+end
+
+-- Anything that isn't a fish: not Trade Goods > Meat (where raw fish live), and
+-- not something one of your Cooking recipes uses. Unknown items count as fish.
+local FISH_CLASS, FISH_SUBCLASS = 7, 8
+local function IsMaterial(id)
+	local name, _, _, _, _, _, _, _, _, _, _, classID, subClassID = C_Item.GetItemInfo(id)
+	if not name then return false end
+	if classID == FISH_CLASS and subClassID == FISH_SUBCLASS then return false end
+	if ns.CookedValue and ns.CookedValue(id) then return false end
+	return true
 end
 
 local function OnLootMessage(msg)
@@ -451,6 +492,10 @@ local function OnLootMessage(msg)
 				local id = tonumber(link:match("item:(%d+)"))
 				if id then
 					local bucket = CurrentBucket()
+					-- with the Rare Fishing buff, things fished up that aren't fish are "Materials"
+					if bucket == "fish" and ns.RareFishingActive() and IsMaterial(id) then
+						bucket = "materials"
+					end
 					local items = db.session.buckets[bucket].items
 					items[id] = (items[id] or 0) + (tonumber(qty) or 1)
 					ns.SetActivity(Activity(bucket))
@@ -592,15 +637,22 @@ SlashCmdList.GOLDSCRIBE = function(msg)
 				ns.FormatMoney(h.grind / hours), kills, ns.FormatMoney(h.fish / hours), ns.FormatMoney(h.fishCooked / hours), opened, gather))
 			if i >= 10 then break end
 		end
+	elseif msg == "fishbuff" or msg:sub(1, 9) == "fishbuff " then
+		local name = msg:sub(10):match("^%s*(.-)%s*$")
+		if name and name ~= "" then
+			db.fishBuff = name
+		end
+		ns.Print(("the fishing buff that turns on the Materials line is \"%s\" (%s right now). /gph fishbuff <name> changes it."):format(
+			db.fishBuff or "Rare Fishing", ns.RareFishingActive() and "active" or "not active"))
 	elseif msg == "debug" then
 		local sum = ns.Summarize()
 		ns.Print(("last spell cast: %s; gathers this session: mining %d, herbs %d, skinning %d; tab: %s"):format(
 			tostring(ns.lastSpell), sum.gathers.mining, sum.gathers.herb, sum.gathers.skin, tostring(db.tab)))
 	elseif msg == "items" then
 		local sum = ns.Summarize()
-		local titles = { grind = "grinding loot:", fish = "fish caught:", opened = "from opened Bloated fish/clams/crates:",
+		local titles = { grind = "grinding loot:", fish = "fish caught:", materials = "materials fished up (Rare Fishing):", opened = "from opened Bloated fish/clams/crates:",
 			mining = "mining:", herb = "herbalism:", skin = "skinning:" }
-		for _, key in ipairs({ "grind", "fish", "opened", "mining", "herb", "skin" }) do
+		for _, key in ipairs({ "grind", "fish", "materials", "opened", "mining", "herb", "skin" }) do
 			local b = sum[key]
 			if #b.list > 0 then
 				ns.Print(titles[key])
@@ -616,7 +668,7 @@ SlashCmdList.GOLDSCRIBE = function(msg)
 			end
 		end
 	else
-		ns.Print("/gph (window), /gph start, /gph pause, /gph reset, /gph items, /gph history, /gph debug")
+		ns.Print("/gph (window), /gph start, /gph pause, /gph reset, /gph items, /gph history, /gph fishbuff, /gph debug")
 	end
 end
 
@@ -641,7 +693,7 @@ frame:SetScript("OnEvent", function(_, event, a, b, c)
 		db = GoldScribeDB
 		db.session = db.session or NewSession()
 		local bk = db.session.buckets
-		for _, key in ipairs({ "opened", "mining", "herb", "skin" }) do
+		for _, key in ipairs({ "opened", "materials", "mining", "herb", "skin" }) do
 			bk[key] = bk[key] or { money = 0, items = {} }
 		end
 		db.session.gathers = db.session.gathers or { mining = 0, herb = 0, skin = 0 }
